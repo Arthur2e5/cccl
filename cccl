@@ -215,10 +215,10 @@ processargs()
 {
 ### Run through every option and convert it to the proper MS one
 local module=args
-while test $# -gt 0; do
+while (($#)); do
     case "$1" in
     -D*) optarg= ;;
-    -*=*) optarg=`echo "$1" | sed 's/[-_a-zA-Z0-9]*=//'` ;;
+    -*=*) optarg="${1#-*=}" ;;
     *) optarg= ;;
     esac
     gotparam=1
@@ -413,7 +413,7 @@ while test $# -gt 0; do
 
     -*)
         # Remaining '-' options are passed to the compiler
-        if test x$optarg != x ; then
+        if [ -n "$optarg" ] ; then
             clopt+=("${slash}${1:1}=$optarg")
         else
             clopt+=("${slash}${1:1}")
@@ -460,39 +460,33 @@ done
 # Whitespace in paths is dealt with by setting IFS and using bash arrays
 # Except additional arguments in CCCL_OPTIONS need to be space separated
 processargs $CCCL_OPTIONS
-IFS=""
-processargs $@
+processargs "$@"
 
-if test $shared_index -ge 0 -a -n "$debug"; then
+if [ "$shared_index" -ge 0 -a -n "$debug" ]; then
     clopt[$shared_index]="${slash}LDd"
 fi
 
-if test x$gotparam = x ; then
+if [ -z "$gotparam" ] ; then
     usage
     exit 1
 fi
 
-if test ${#linkopt[@]} -eq 1 ; then
+if ((${#linkopt[@]} == 1)) ; then
     linkopt=()
 fi
 
 [[ "$V" == 1 ]] && ((verbose++))
 
 if (( verbose > 3 )) ; then
-  echo -n "$prog"
-  for opt in "${clopt[@]}" ; do
-    echo -n " \"$opt\""
-  done
-  for opt in "${linkopt[@]}" ; do
-    echo -n " \"$opt\""
-  done
-  echo ""
+  printf '%q ' "$prog" "${clopt[@]}" "${linkopt[@]}"
+  echo
+
 fi
 
-if test -z "$muffle" ; then
-    exec $prog ${clopt[@]} ${linkopt[@]}
+if [ -z "$muffle" ] ; then
+    exec "$prog" "${clopt[@]}" "${linkopt[@]}"
 else
   # tr needed below for $ in regex to work (simple alternative to dos2unix)
-    exec $prog ${clopt[@]} ${linkopt[@]} | tr -d '\r' | grep -v -e "\.cpp$" -e "\.cxx$" -e "\.cc$" -e "\.C$" -e "\.c$" -e "^   Creating library" -e "^Generating Code"
+    exec "$prog"${clopt[@]}" "${linkopt[@]}" | tr -d '\r' | grep -v -e "\.cpp$" -e "\.cxx$" -e "\.cc$" -e "\.C$" -e "\.c$" -e "^   Creating library" -e "^Generating Code"
     exit ${PIPESTATUS[0]}
 fi
