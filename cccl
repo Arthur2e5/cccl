@@ -48,12 +48,89 @@ debug=
 # gotparam is 0 if we didn't ever see a param, in which case we show usage()
 gotparam=
 muffle=
-verbose=
+verbose=3	# F0 E1 W2 I3 V4 D5
 shared_index=-1
+extwarn=0	# Allows -W<msvc_warning_num>, etc. Quite useless.
+command_not_found_handle(){
+    if [[ "$1" == usage_* ]]; then module=help EE "No such topic ${1#usage_}."; return; fi;
+    EE "command not found: $(printf '%q ' "$@")";
+    return 127
+}
+
+BOOM(){ FF "$1"; exit "${2-1}"; }
+
+FF(){ ((verbose < 0)) || echo "cccl.$module: F:	$@">&2; }
+EE(){ ((verbose < 1)) || echo "cccl.$module: E:	$@">&2; }
+WW(){ ((verbose < 2)) || echo "cccl.$module: W:	$@">&2; }
+II(){ ((verbose < 3)) || echo "cccl.$module: I:	$@">&2; }
+VV(){ ((verbose < 4)) || echo "cccl.$module: V:	$@">&2; }
+DD(){ ((verbose < 5)) || echo "cccl.$module: D:	$@">&2; }
+
+cl_version(){
+    if (( cl_version < "$1" )); then
+        VV "Omitting higher version passes for ${2-current target}."
+        return 1
+    fi
+}
+
+# Returns the translated march OR mtune.
+# Naive alternative for an associative array. (bash>=4, not available in common MSYS)
+machine()
+{
+    case "$1" in
+        -march=*)	machine_arch "${1#-march=}";;
+        -mtune=*)	machine_tune "${1#-mtune=}";;
+        -mfpu=*)	cl_version 17 "$1" && [[ "$1" == -mfpu=*vfpv4* ]] && echo arch:VFPv4;;
+        -m*)		machine_arch "${1#-m}";;
+    esac
+}
+
+machine_tune()
+{
+    local module=mtune
+    case "$1" in
+        386)		echo G3;;
+        486)		echo G4;;
+        pentium)	echo G5;;
+        pentiumpro)	echo G6;;
+#		itanium2)	echo G2;;	# Default in MSVC.
+        *)			VV "No translation for $1."
+    esac
+}
+
+machine_arch()
+{
+    local continue=0 module=march
+    case "$1" in
+        sse)		echo arch:SSE;;
+        sse2)		echo arch:SSE2;;
+        *)			continue=1
+    esac
+    (( continue )) && cl_version 16 "$1" || return
+    if [[ "$1" == avx* ]]; then
+        echo arch:AVX
+        return
+    fi
+    cl_version 17 || return
+    continue=0
+    case "$1" in
+        generic*)	echo arch:IA32;;
+        armv7ve)	echo ARMv7VE;;
+        *)			continue=1
+    esac
+    ((continue VV)) && "No translation for $1."
+}
+
+get_cl_ver(){
+    $prog 2>&1 | head -n 2 | grep -Eo '(\d\.)+\d for .*$' | head -n 1 | cut -d. -f 1 && return
+    module=cl_ver WW "Failed getting cl version, not changing."
+    echo "${cl_version:-17}"
+}
 
 processargs()
 {
 ### Run through every option and convert it to the proper MS one
+local module=args
 while test $# -gt 0; do
     case "$1" in
     -D*) optarg= ;;
@@ -107,45 +184,51 @@ EOF
         clopt+=("${slash}c")
         ;;
 
-    -g[0-9] | -g)
+    -g*)
         # cl only supports one debugging level
         clopt+=("${slash}Zi")
         debug=1
         ;;
 
     -O0)
-        clopt+=("${slash}Ot")
+        echo "${slash}Od"
+        ;;
+
+    -O|-O1|-Og)
+        echo "${slash}Os"
+        ;;
+
+    -Os)
+        echo "${slash}O1"
         ;;
 
     -O2)
-        clopt+=("${slash}O2")
+        echo "${slash}Of"
+        ;;
+
+    -O3)
+        echo "${slash}O2"
+        ;;
+
+    -Ofast)
+        echo "${slash}Ox"
+        ;;
+
+    -O*)
+        WW "Unknown Optimization $1"
         ;;
 
     -L*)
-        path=`echo "$1" | sed 's/-L//'`
-        linkopt+=("${slash}LIBPATH:$path")
+        linkopt+=("${slash}LIBPATH:${1#-L}")
         ;;
 
     -l*)
-        lib=`echo "$1" | sed 's/-l//'`
-        lib="$lib.lib"
-        clopt+=("$lib")
+        clopt+=("${1#-l}.lib")
         ;;
 
-    -m386)
-        clopt+=("${slash}G3")
-        ;;
-
-    -m486)
-        clopt+=("${slash}G4")
-        ;;
-
-    -mpentium)
-        clopt+=("${slash}G5")
-        ;;
-
-    -mpentiumpro)
-        clopt+=("${slash}G6")
+    -m*)
+        arg="$(march "$1")"
+        [ -n "$arg" ] && clopt+=("${slash}$arg")
         ;;
 
     -o)
@@ -164,6 +247,28 @@ EOF
 
     -pedantic)
         #ignore pedantic
+        ;;
+
+    -Wall)
+        clopt+=("${slash}W3")
+        ;;
+
+    -Weverything|-Wextra)
+        clopt+=("${slash}Wall")
+        ;;
+
+    -Werror)
+        clopt+=("${slash}Wx")
+        ;;
+
+    -Werror-*)
+        ((extwarn)) && clopt+=("${slash}we${1#-Werror-}")
+        ;;
+
+    -Wno-error-*) ;;
+
+    -Wno-*)
+        ((extwarn)) && clopt+=("${slash}wd${1#-Wno-}")
         ;;
 
     -W*)
@@ -256,11 +361,9 @@ if test ${#linkopt[@]} -eq 1 ; then
     linkopt=()
 fi
 
-if test x$V = x1 ; then
-    verbose=1
-fi
+[[ "$V" == 1 ]] && ((verbose++))
 
-if test -n "$verbose" ; then
+if (( verbose > 3 )) ; then
   echo -n "$prog"
   for opt in "${clopt[@]}" ; do
     echo -n " \"$opt\""
