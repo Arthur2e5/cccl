@@ -18,15 +18,97 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
+cccl_version=1.1a1
+usages='optimizers, warnings, targets, cccl, misc, license'
 usage()
 {
-    cat <<EOF
-Usage: cccl [--cccl-link] [--cccl-muffle] [--cccl-verbose] [--help] [--version]
-       [OPTIONS]
+    cat << EOF
+Usage:	cccl [--help] [--version]
+	cccl [OPTIONS]
 
 cccl is a wrapper around Microsoft's cl.exe compiler.  It translates parameters
 given by [OPTIONS] that Unix cc understands into parameters that cl understands.
+
+Options:
+	--help		This help text.
+	--help=foo[,..]	Displays help on $usages or all.
+	--version	Displays CCCL version.
+
+EOF
+}
+
+usage_cccl(){
+	cat << EOF
+CCCL:
+	--cccl-link OPT	Add OPT to linker's options.
+	--cccl-lit OPT	Add OPT to cl's options.
+	--cccl-muffle	Makes the compiler less verbose about steps.
+	--cccl-verbose	Increase verbosity by one.
+	--cccl-quiet	Decrease verbosity by one.
+	--cccl-prog	Specify an alternative cl.
+	--cccl-version	Specify an alternative cl version.
+			If it doesn't match [12][0-9], we try to detect one.
+	--cccl-extwarn 	Enables or disables (=0) CL warning numbers in -W.
+
+EOF
+}
+
+usage_optimizers()
+{
+	cat <<EOF
+Optimizers:
+	-O0		Disable optimizations.		/Od
+	-O[1g]?		Prefer size over speed.		/Os
+	-Os		Optimize for minimum size.	/O1
+	-O2		Perfer speed over size.		/Of
+	-O3		Optimize for maximum speed.	/O2
+	-Ofast		Full optimization.		/Ox
+
+EOF
+}
+
+usage_targets()
+{
+	cat << EOF
+Targets:
+	-m<arch>,
+	-march=<arch>	Generate code for <arch>.	/arch
+	-mtune=<cpu>	Tune code for <cpu>.		/G
+
+EOF
+}
+
+usage_warnings(){
+	cat << EOF
+Warnings:
+	-Wall		All useful warnings.		/W3
+	-Weverything,
+	-Wextra		Extra warnings.			/Wall
+	-Werror		Treat all warnings as errors.	/Wx
+(ExtWarn)
+	-Werror-<n>	Treat warning n as an error.	/we<n>
+	-Wno-<n>	Don't issue warnings for n.	/wd<n>
+
+EOF
+}
+
+usage_misc(){
+	cat << EOF
+Misc:
+	-f
+
+EOF
+}
+
+usage_license(){
+	cat <<EOF
+cccl $cccl_version (cl $cl_version)
+
+Copyright (C) 2000-2015 CCCL AUTHORS (listed in the AUTHORS file)
+
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
 EOF
 }
 
@@ -41,10 +123,12 @@ esac
 
 # prog specifies the program that should be run cl.exe
 prog=cl
+cl_version=17 # [12->98 13->03 14->05 15->08 16->10 17->12 18->13 19->15]
 # opts specifies the command line to pass to the MSVC program
 clopt=("${slash}nologo")
 linkopt=("${slash}link")
-debug=
+debug=0
+warning=1
 # gotparam is 0 if we didn't ever see a param, in which case we show usage()
 gotparam=
 muffle=
@@ -140,6 +224,16 @@ while test $# -gt 0; do
     gotparam=1
 
     case "$1" in
+
+    --help=*)
+        usage
+        IFS=', '
+        for i in ${optarg//all/$usages}; do
+        	[ "$i" ] && usage_"$i"
+        done
+        exit 0
+        ;;
+
     --help)
         usage
         exit 0
@@ -165,13 +259,35 @@ while test $# -gt 0; do
         ;;
 
     --cccl-verbose)
-        verbose=1
+        ((verbose++))
+        ;;
+
+    --cccl-quiet)
+        ((verbose--))
+        ;;
+
+    --cccl-lit)
+        clopt+=("$2")
+        shift
+        ;;
+
+    --cccl-prog)
+        type "$optarg" && prog=$optarg
+        ;;
+
+    --cccl-extwarn)
+        extwarn=${optarg:-1}
+        ;;
+
+    --cccl-version=*)
+        case "$optarg" in
+        	[12][0-9])	cl_version=$optarg;;
+        	*)			cl_version="$(get_cl_ver)";;
+        esac
         ;;
 
     --version)
-        cat <<EOF
-cccl 1.0
-EOF
+        usage_license
         exit 0;
         ;;
 
@@ -272,7 +388,6 @@ EOF
         ;;
 
     -W*)
-        #ignore warnings
         ;;
 
     -fno-strict-aliasing*)
@@ -381,4 +496,3 @@ else
     exec $prog ${clopt[@]} ${linkopt[@]} | tr -d '\r' | grep -v -e "\.cpp$" -e "\.cxx$" -e "\.cc$" -e "\.C$" -e "\.c$" -e "^   Creating library" -e "^Generating Code"
     exit ${PIPESTATUS[0]}
 fi
-
